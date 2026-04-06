@@ -1,0 +1,85 @@
+name: med-triage-env
+version: "1.0.0"
+description: >
+  Medical Emergency Department Triage Environment.
+  An AI agent acts as an ED triage system, assessing incoming patients,
+  assigning urgency levels (ESI 1-5), ordering appropriate diagnostic tests,
+  and setting patient dispositions. Clinically realistic scenarios with
+  partial reward signals throughout the episode.
+
+tags:
+  - openenv
+  - medical
+  - healthcare
+  - triage
+  - real-world
+  - multi-step
+
+author: "MedTriageEnv Team"
+license: MIT
+
+tasks:
+  - name: triage_easy
+    description: "Single critical patient — assign ESI urgency level"
+    difficulty: easy
+    max_steps: 5
+    reward_range: [0.0, 1.0]
+
+  - name: triage_medium
+    description: "4-patient queue — urgency triage + order tests + disposition"
+    difficulty: medium
+    max_steps: 15
+    reward_range: [0.0, 1.0]
+
+  - name: triage_hard
+    description: "Full ED simulation — 6 patients including STEMI, SAH, meningitis, ectopic pregnancy"
+    difficulty: hard
+    max_steps: 40
+    reward_range: [0.0, 1.0]
+
+observation_space:
+  type: object
+  description: "Structured patient data including vitals, history, test results, and current assignments"
+  fields:
+    - task_name: string
+    - step: integer
+    - patients: "List[Patient] with vitals, history, chief complaint"
+    - ordered_tests: "Dict[patient_id, List[test_name]]"
+    - test_results: "Dict[patient_id, Dict[test_name, result_text]]"
+    - assigned_urgency: "Dict[patient_id, int (1-5)]"
+    - dispositions: "Dict[patient_id, string]"
+    - message: string
+    - available_actions: "List[string]"
+
+action_space:
+  type: object
+  description: "Typed action with action_type and optional fields"
+  action_types:
+    - assign_urgency: "Assign ESI level 1-5 to a patient"
+    - order_test: "Order a diagnostic test for a patient"
+    - set_disposition: "Set patient disposition (admit/discharge/observe/transfer)"
+    - reassess: "Reassess a patient with updated information"
+    - done: "Signal episode completion"
+
+reward:
+  type: continuous
+  range: [0.0, 1.0]
+  shaping:
+    - Immediate reward for correct urgency assignment
+    - Immediate reward for ordering appropriate tests
+    - Immediate reward for correct disposition
+    - Penalty for duplicate tests or invalid actions
+    - Penalty for under-triaging critical patients (ESI 1)
+    - End-of-episode holistic score (weighted combination)
+
+endpoints:
+  reset: POST /reset
+  step: POST /step
+  state: GET /state
+  grade: GET /grade
+  tasks: GET /tasks
+  health: GET /health
+
+docker:
+  port: 7860
+  base_image: python:3.11-slim
