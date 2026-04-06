@@ -1,12 +1,12 @@
 """
 FastAPI application exposing the MedicalTriageEnv via HTTP endpoints.
-Compliant with OpenEnv spec.
+Compliant with OpenEnv spec — /reset accepts empty body OR JSON body.
 """
 
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -25,8 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global environment store (keyed by task_name for simplicity)
+# Global environment store
 _envs: Dict[str, MedicalTriageEnv] = {}
+
+DEFAULT_TASK = "triage_easy"
 
 
 def _get_env(task_name: str) -> MedicalTriageEnv:
@@ -35,15 +37,8 @@ def _get_env(task_name: str) -> MedicalTriageEnv:
     return _envs[task_name]
 
 
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
-
-class ResetRequest(BaseModel):
-    task_name: str = "triage_easy"
-
 class StepRequest(BaseModel):
-    task_name: str = "triage_easy"
+    task_name: str = DEFAULT_TASK
     action: Dict[str, Any]
 
 
@@ -67,19 +62,47 @@ def health():
 
 
 @app.post("/reset")
-def reset(req: ResetRequest):
-    env = _get_env(req.task_name)
+async def reset(request: Request):
+    """
+    Accept POST /reset with:
+    - empty body
+    - null body
+    - JSON body: {} or {"task_name": "triage_easy"}
+    """
+    task_name = DEFAULT_TASK
+    try:
+        body_bytes = await request.body()
+        if body_bytes and body_bytes.strip() not in (b"", b"null"):
+            body = await request.json()
+            if isinstance(body, dict):
+                task_name = body.get("task_name", DEFAULT_TASK)
+    except Exception:
+        pass  # empty/null body — use default task
+
+    env = _get_env(task_name)
     obs = env.reset()
-    return {"observation": obs.dict(), "task": req.task_name}
+    return {"observation": obs.dict(), "task": task_name}
 
 
 @app.post("/step")
-def step(req: StepRequest):
-    env = _get_env(req.task_name)
+async def step(request: Request):
+    """Accept step with task_name + action."""
+    task_name = DEFAULT_TASK
+    action_dict = {}
     try:
-        action = Action(**req.action)
+        body = await request.json()
+        if isinstance(body, dict):
+            task_name = body.get("task_name", DEFAULT_TASK)
+            action_dict = body.get("action", {})
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON body: {e}")
+
+    env = _get_env(task_name)
+    try:
+        action = Action(**action_dict)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid action: {e}")
+
     obs, reward, done, info = env.step(action)
     return {
         "observation": obs.dict(),
@@ -90,13 +113,13 @@ def step(req: StepRequest):
 
 
 @app.get("/state")
-def state(task_name: str = "triage_easy"):
+def state(task_name: str = DEFAULT_TASK):
     env = _get_env(task_name)
     return env.state()
 
 
 @app.get("/grade")
-def grade(task_name: str = "triage_easy"):
+def grade(task_name: str = DEFAULT_TASK):
     env = _get_env(task_name)
     score = env.grade()
     return {"task": task_name, "score": score}
